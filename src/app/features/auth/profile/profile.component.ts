@@ -9,6 +9,7 @@ import { HttpClient } from '@angular/common/http';
 
 @Component({
   selector: 'fc-profile',
+  standalone: false,
   template: `
     <div class="profile-container">
       <mat-card class="profile-card">

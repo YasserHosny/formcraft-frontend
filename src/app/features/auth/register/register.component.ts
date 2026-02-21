@@ -8,6 +8,7 @@ import { environment } from '../../../../environments/environment';
 
 @Component({
   selector: 'fc-register',
+  standalone: false,
   template: `
     <div class="register-container">
       <mat-card class="register-card">

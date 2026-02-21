@@ -5,6 +5,7 @@ import { TemplateService } from '../../../core/services/template.service';
 
 @Component({
   selector: 'fc-template-create-dialog',
+  standalone: false,
   template: `
     <h2 mat-dialog-title>{{ 'templates.create' | translate }}</h2>
     <mat-dialog-content>

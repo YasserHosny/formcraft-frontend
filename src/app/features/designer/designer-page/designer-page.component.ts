@@ -8,6 +8,7 @@ import { ElementType } from '../../../models/template.model';
 
 @Component({
   selector: 'fc-designer-page',
+  standalone: false,
   providers: [CanvasService],
   template: `
     <div class="designer-layout">

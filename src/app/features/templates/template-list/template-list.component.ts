@@ -5,6 +5,7 @@ import { TemplateCreateDialogComponent } from '../template-create-dialog/templat
 
 @Component({
   selector: 'fc-template-list',
+  standalone: false,
   template: `
     <mat-toolbar color="primary">
       <span>{{ 'templates.title' | translate }}</span>

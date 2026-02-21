@@ -5,6 +5,7 @@ import { LanguageService } from '../../../core/i18n/language.service';
 
 @Component({
   selector: 'fc-app-shell',
+  standalone: false,
   template: `
     <mat-toolbar color="primary" class="app-toolbar">
       <span class="app-title" routerLink="/templates">FormCraft</span>

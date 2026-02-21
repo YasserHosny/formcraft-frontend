@@ -4,6 +4,7 @@ import { AuthService } from './core/auth/auth.service';
 
 @Component({
   selector: 'fc-root',
+  standalone: false,
   template: `
     <ng-container *ngIf="isAuthenticated; else loginOnly">
       <fc-app-shell></fc-app-shell>

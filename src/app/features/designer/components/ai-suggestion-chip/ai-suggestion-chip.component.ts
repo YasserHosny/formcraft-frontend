@@ -3,6 +3,7 @@ import { SuggestionResponse } from '../../services/ai-suggestion.service';
 
 @Component({
   selector: 'fc-ai-suggestion-chip',
+  standalone: false,
   template: `
     <div class="suggestion-chip" *ngIf="suggestion">
       <div class="suggestion-header">

@@ -5,6 +5,7 @@ import { AuthService } from '../../../core/auth/auth.service';
 
 @Component({
   selector: 'fc-login',
+  standalone: false,
   template: `
     <div class="login-container">
       <mat-card class="login-card">
