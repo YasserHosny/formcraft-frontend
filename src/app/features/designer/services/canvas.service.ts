@@ -22,6 +22,8 @@ export class CanvasService implements OnDestroy {
   private layer: Konva.Layer | null = null;
   private pageRect: Konva.Rect | null = null;
   private transformer: Konva.Transformer | null = null;
+  private detectionLayer: Konva.Layer | null = null;
+  private backgroundImage: Konva.Image | null = null;
 
   private elements = new Map<string, CanvasElement>();
   private undoStack: UndoEntry[] = [];
@@ -43,6 +45,23 @@ export class CanvasService implements OnDestroy {
   private snapEnabled = true;
   private pageWidthMm = 210;
   private pageHeightMm = 297;
+  private detections: { bbox: { x: number; y: number; width: number; height: number }; type?: string }[] = [];
+
+  reset(containerId: string, widthMm: number, heightMm: number): void {
+    this.stage?.destroy();
+    this.stage = null;
+    this.layer = null;
+    this.pageRect = null;
+    this.transformer = null;
+    this.detectionLayer = null;
+    this.elements.clear();
+    this.undoStack = [];
+    this.redoStack = [];
+    this._selectedElement.next(null);
+    this._dirty.next(false);
+    this.detections = [];
+    this.init(containerId, widthMm, heightMm);
+  }
 
   init(containerId: string, widthMm: number, heightMm: number): void {
     this.pageWidthMm = widthMm;
@@ -60,6 +79,9 @@ export class CanvasService implements OnDestroy {
     this.layer = new Konva.Layer();
     this.stage.add(this.layer);
 
+    this.detectionLayer = new Konva.Layer();
+    this.stage.add(this.detectionLayer);
+
     // Page background (white rectangle with shadow)
     this.pageRect = new Konva.Rect({
       x: 20,
@@ -75,6 +97,8 @@ export class CanvasService implements OnDestroy {
       listening: false,
     });
     this.layer.add(this.pageRect);
+
+    this.backgroundImage = null;
 
     // Grid overlay
     this.drawGrid();
@@ -101,6 +125,43 @@ export class CanvasService implements OnDestroy {
     });
 
     this.layer.draw();
+    this.detectionLayer.draw();
+  }
+
+  setBackgroundImage(imageUrl: string): void {
+    if (!this.layer || !this.pageRect) return;
+    const img = new window.Image();
+    img.onload = () => {
+      if (!this.layer || !this.pageRect) return;
+
+      if (this.backgroundImage) {
+        this.backgroundImage.destroy();
+      }
+
+      this.backgroundImage = new Konva.Image({
+        image: img,
+        x: this.pageRect.x(),
+        y: this.pageRect.y(),
+        width: this.pageRect.width(),
+        height: this.pageRect.height(),
+        listening: false,
+      });
+      this.layer.add(this.backgroundImage);
+      this.backgroundImage.moveToBottom();
+      this.pageRect?.moveToBottom();
+      this.layer.draw();
+    };
+    img.src = imageUrl;
+  }
+
+  setDetections(detections: { bbox: { x: number; y: number; width: number; height: number }; suggested_type?: string }[]): void {
+    this.detections = detections.map((d) => ({ bbox: d.bbox, type: d.suggested_type }));
+    this.renderDetections();
+  }
+
+  clearDetections(): void {
+    this.detections = [];
+    this.renderDetections();
   }
 
   addElement(data: Record<string, unknown>): CanvasElement {
@@ -225,6 +286,51 @@ export class CanvasService implements OnDestroy {
     if (this.stage) {
       this.stage.scale({ x: z, y: z });
       this.stage.draw();
+    }
+    this.renderDetections();
+  }
+
+  private renderDetections(): void {
+    if (!this.detectionLayer) return;
+    this.detectionLayer.destroyChildren();
+
+    const zoom = this._zoom.value;
+    for (const detection of this.detections) {
+      const x = mmToPx(detection.bbox.x, this.dpi, zoom) + 20;
+      const y = mmToPx(detection.bbox.y, this.dpi, zoom) + 20;
+      const w = mmToPx(detection.bbox.width, this.dpi, zoom);
+      const h = mmToPx(detection.bbox.height, this.dpi, zoom);
+
+      const color = this.getDetectionColor(detection.type);
+      const rect = new Konva.Rect({
+        x,
+        y,
+        width: w,
+        height: h,
+        stroke: color,
+        strokeWidth: 1,
+        dash: [4, 4],
+        listening: false,
+      });
+      this.detectionLayer.add(rect);
+    }
+    this.detectionLayer.draw();
+  }
+
+  private getDetectionColor(type?: string): string {
+    switch (type) {
+      case 'date':
+        return '#4caf50';
+      case 'currency':
+        return '#ff9800';
+      case 'number':
+        return '#2196f3';
+      case 'checkbox':
+        return '#9c27b0';
+      case 'signature':
+        return '#f44336';
+      default:
+        return '#607d8b';
     }
   }
 

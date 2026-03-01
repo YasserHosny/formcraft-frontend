@@ -5,6 +5,8 @@ import { TemplateService } from '../../../core/services/template.service';
 import { CanvasService, CanvasElement } from '../services/canvas.service';
 import { ELEMENT_DEFAULTS } from '../../../models/element-defaults';
 import { ElementType } from '../../../models/template.model';
+import { FormDetectionService } from '../../../core/services/form-detection.service';
+import { DetectionResponse, DetectedField } from '../models/detected-field.model';
 
 @Component({
   selector: 'fc-designer-page',
@@ -36,6 +38,10 @@ import { ElementType } from '../../../models/template.model';
           <mat-toolbar class="canvas-toolbar">
             <span>{{ templateName }}</span>
             <span class="spacer"></span>
+            <button mat-stroked-button color="primary" (click)="openImport()">
+              <mat-icon>upload_file</mat-icon>
+              Import Cheque
+            </button>
             <button mat-icon-button (click)="canvasService.zoomIn()" matTooltip="Zoom In"><mat-icon>zoom_in</mat-icon></button>
             <button mat-icon-button (click)="canvasService.zoomOut()" matTooltip="Zoom Out"><mat-icon>zoom_out</mat-icon></button>
             <button mat-icon-button (click)="canvasService.toggleSnap()" matTooltip="Snap"><mat-icon>grid_on</mat-icon></button>
@@ -49,6 +55,41 @@ import { ElementType } from '../../../models/template.model';
           </mat-toolbar>
           <div id="konva-container" class="konva-container"></div>
         </mat-sidenav-content>
+
+        <div class="import-panel" *ngIf="showImportPanel">
+          <h4>Import Cheque</h4>
+          <input type="file" (change)="onFileSelected($event)" accept="image/*" />
+          <div class="actions">
+            <button mat-flat-button color="primary" (click)="runDetection()" [disabled]="!importFile || loadingDetections">
+              <mat-icon>auto_fix_high</mat-icon>
+              Detect
+            </button>
+            <button mat-button (click)="closeImport()">Cancel</button>
+          </div>
+          <mat-progress-spinner *ngIf="loadingDetections" mode="indeterminate" diameter="28"></mat-progress-spinner>
+        </div>
+
+        <div class="detections-panel" *ngIf="showDetectionsPanel">
+          <h4>Detections ({{ detections.length }})</h4>
+          <div class="actions">
+            <button mat-flat-button color="primary" (click)="acceptAll()">Accept All</button>
+            <button mat-button color="warn" (click)="rejectAll()">Reject All</button>
+          </div>
+          <div *ngFor="let d of detections; let i = index" class="detection-card">
+            <div class="detection-row">
+              <div>
+                <strong>{{ d.text || 'Untitled' }}</strong>
+                <div class="detection-meta">{{ d.bbox.x | number:'1.0-2' }} , {{ d.bbox.y | number:'1.0-2' }} mm</div>
+              </div>
+              <span class="badge">{{ d.suggested_type }}</span>
+            </div>
+            <div class="detection-meta">Confidence: {{ d.confidence | percent:'1.0-0' }}</div>
+            <div class="actions" style="margin-top: 8px;">
+              <button mat-stroked-button color="primary" (click)="acceptSingle(i)">Accept</button>
+              <button mat-button color="warn" (click)="rejectSingle(i)">Reject</button>
+            </div>
+          </div>
+        </div>
 
         <!-- Right: Property Panel -->
         <mat-sidenav mode="side" opened position="end" class="property-sidenav">
@@ -121,14 +162,53 @@ import { ElementType } from '../../../models/template.model';
     .full-width { width: 100%; }
     .prop-row { display: flex; gap: 8px; }
     .prop-row mat-form-field { flex: 1; }
+    .import-panel {
+      position: fixed;
+      right: 24px;
+      top: 90px;
+      width: 320px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      z-index: 200;
+      padding: 16px;
+    }
+    .import-panel h4 { margin: 0 0 12px; }
+    .import-panel .actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+    .detections-panel {
+      position: fixed;
+      right: 24px;
+      top: 90px;
+      width: 360px;
+      max-height: 70vh;
+      overflow: auto;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      z-index: 200;
+      padding: 16px;
+    }
+    .detection-card { border: 1px solid #eee; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+    .detection-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .detection-meta { font-size: 11px; color: #777; }
+    .badge { font-size: 10px; padding: 2px 6px; background: #f2f2f2; border-radius: 999px; }
   `],
 })
 export class DesignerPageComponent implements OnInit, AfterViewInit, OnDestroy {
   templateId = '';
   templateName = 'Loading...';
+  pageId = '';
   selectedElement: CanvasElement | null = null;
   isDirty = false;
   elementTypes = Object.values(ELEMENT_DEFAULTS);
+
+  showImportPanel = false;
+  showDetectionsPanel = false;
+  importFile: File | null = null;
+  detections: DetectedField[] = [];
+  detectionId = '';
+  loadingDetections = false;
+  importPreviewUrl: string | null = null;
 
   private subs: Subscription[] = [];
   private elementCounter = 0;
@@ -136,7 +216,8 @@ export class DesignerPageComponent implements OnInit, AfterViewInit, OnDestroy {
   constructor(
     private route: ActivatedRoute,
     private templateService: TemplateService,
-    public canvasService: CanvasService
+    public canvasService: CanvasService,
+    private formDetectionService: FormDetectionService
   ) {}
 
   ngOnInit(): void {
@@ -160,7 +241,12 @@ export class DesignerPageComponent implements OnInit, AfterViewInit, OnDestroy {
           const page = template.pages?.[0];
           const w = page?.width_mm || 210;
           const h = page?.height_mm || 297;
+          this.pageId = page?.id || '';
           this.canvasService.init('konva-container', w, h);
+
+          if (page?.background_asset) {
+            this.canvasService.setBackgroundImage(page.background_asset);
+          }
 
           // Load existing elements onto canvas
           for (const el of page?.elements || []) {
@@ -172,6 +258,129 @@ export class DesignerPageComponent implements OnInit, AfterViewInit, OnDestroy {
     } else {
       this.canvasService.init('konva-container', 210, 297);
     }
+  }
+
+  openImport(): void {
+    this.showImportPanel = true;
+    this.showDetectionsPanel = false;
+  }
+
+  closeImport(): void {
+    this.showImportPanel = false;
+  }
+
+  onFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      this.importFile = input.files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        this.importPreviewUrl = reader.result as string;
+      };
+      reader.readAsDataURL(this.importFile);
+    }
+  }
+
+  runDetection(): void {
+    if (!this.importFile || !this.templateId) return;
+    this.loadingDetections = true;
+    this.formDetectionService.importForm(this.templateId, this.importFile).subscribe({
+      next: (response: DetectionResponse) => {
+        this.detections = response.detected_fields;
+        this.detectionId = response.id;
+        if (response.page_dimensions?.width && response.page_dimensions?.height) {
+          this.canvasService.reset('konva-container', response.page_dimensions.width, response.page_dimensions.height);
+        }
+        if (this.importPreviewUrl) {
+          this.canvasService.setBackgroundImage(this.importPreviewUrl);
+          if (this.pageId) {
+            this.templateService.updatePage(this.pageId, { background_asset: this.importPreviewUrl }).subscribe();
+          }
+        }
+        this.canvasService.setDetections(this.detections);
+        this.showDetectionsPanel = true;
+        this.showImportPanel = false;
+        this.loadingDetections = false;
+      },
+      error: () => {
+        this.loadingDetections = false;
+      },
+    });
+  }
+
+  acceptAll(): void {
+    if (!this.templateId || !this.detectionId) return;
+    const ids = this.detections.map((_, idx) => idx);
+    this.formDetectionService.acceptDetections(this.templateId, this.detectionId, ids).subscribe({
+      next: () => {
+        this.showDetectionsPanel = false;
+        this.detections = [];
+        this.canvasService.clearDetections();
+        this.reloadTemplate();
+      },
+    });
+  }
+
+  rejectAll(): void {
+    if (!this.detectionId) return;
+    this.formDetectionService.deleteDetection(this.detectionId).subscribe({
+      next: () => {
+        this.showDetectionsPanel = false;
+        this.detections = [];
+        this.canvasService.clearDetections();
+      },
+    });
+  }
+
+  acceptSingle(index: number): void {
+    if (!this.templateId || !this.detectionId) return;
+    this.formDetectionService
+      .acceptDetections(this.templateId, this.detectionId, [index])
+      .subscribe({
+        next: () => {
+          this.detections.splice(index, 1);
+          if (this.detections.length === 0) {
+            this.showDetectionsPanel = false;
+            this.canvasService.clearDetections();
+          } else {
+            this.canvasService.setDetections(this.detections);
+          }
+          this.reloadTemplate();
+        },
+      });
+  }
+
+  rejectSingle(index: number): void {
+    this.detections.splice(index, 1);
+    if (this.detections.length === 0) {
+      this.showDetectionsPanel = false;
+      this.canvasService.clearDetections();
+      if (this.detectionId) {
+        this.formDetectionService.deleteDetection(this.detectionId).subscribe();
+      }
+    } else {
+      this.canvasService.setDetections(this.detections);
+    }
+  }
+
+  private reloadTemplate(): void {
+    if (!this.templateId) return;
+    this.templateService.get(this.templateId).subscribe({
+      next: (template: any) => {
+        const page = template.pages?.[0];
+        const w = page?.width_mm || 210;
+        const h = page?.height_mm || 297;
+        this.pageId = page?.id || '';
+        this.canvasService.reset('konva-container', w, h);
+        if (page?.background_asset) {
+          this.canvasService.setBackgroundImage(page.background_asset);
+        }
+        for (const el of page?.elements || []) {
+          this.canvasService.addElement(el);
+        }
+        this.canvasService.markClean();
+      },
+    });
   }
 
   addElement(type: ElementType): void {
